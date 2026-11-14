@@ -1,0 +1,17 @@
+Drop character models in this folder and the game uses them automatically.
+Name them after the character:
+
+  tempo.glb   hopper.glb   orbit.glb   syrup.glb
+
+Any you leave out just use the built-in shape character.
+
+Free ones that work well (CC0, no credit needed):
+Kenney "Mini Characters"  https://kenney.nl/assets/mini-characters
+  - open the zip, go to "Models/GLB format"
+  - copy 4 characters in here and rename them to the names above
+  - ALSO copy the "Textures" folder from that same place into this folder,
+    otherwise they show up white
+
+Animations (idle / run / jump / attack) get picked up by name automatically.
+If a model is facing the wrong way, change the PI / 2.0 line in
+scripts/fighter.gd (_load_model) to -PI / 2.0

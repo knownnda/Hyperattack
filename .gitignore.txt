@@ -1,0 +1,20 @@
+# Godot-specific ignores
+.godot/
+*.import
+*.godot
+*.tmp
+*.swp
+*.sublime-workspace
+*.sublime-project
+
+# Export folders
+export/*
+!export/.gitkeep
+
+# User settings
+*.cfg
+*.json
+
+# Local configuration
+/misc/
+/bin/

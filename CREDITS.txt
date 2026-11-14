@@ -1,0 +1,9 @@
+# one line per credit. lines starting with # are ignored. shown on the credits screen.
+HYPER ATTACK
+made by you
+CHARACTERS
+"Private" by gaddiellartey2010 - CC BY 4.0 - sketchfab.com/3d-models/private-c874448fe82a45448f7fad5adb0763ba
+"Nerdo" by Drawnah - CC BY 4.0 - sketchfab.com/3d-models/nerdo-a3da6439a8d94ae9b340eee6fc2d3354
+"MacDonald" by Kasugay - Sketchfab Standard licence - sketchfab.com/3d-models/macdonald-55641025cc30468e953eebbbd5ba80be
+"Macdonald Mouse" by Kasugay - Sketchfab Standard licence - sketchfab.com/3d-models/macdonald-mouse-27e4cef91e174dd180bac237383f02c2
+inspired by Lethal League Blaze (Team Reptile)
