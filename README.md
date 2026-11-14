@@ -172,8 +172,6 @@ hyper-attack/
 - "Nerdo" by Drawnah, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), [Sketchfab](https://sketchfab.com/3d-models/nerdo-a3da6439a8d94ae9b340eee6fc2d3354)
 - "MacDonald" and "Macdonald Mouse" by Kasugay, Sketchfab Standard licence
 
-**sounds:** final K.O. sound effect from *Super Smash Bros. Ultimate* (Nintendo). It's only there for the in-person demo; swap it out before publishing anywhere.
-
 **massive inspiration:** *Lethal League Blaze* by Team Reptile. go play it, it's incredible.
 
 **thank you** to Hack Club and everyone at Haven London for running the jam and putting up with the chaos. 🫶
