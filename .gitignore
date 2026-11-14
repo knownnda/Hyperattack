@@ -1,0 +1,11 @@
+# Godot rebuilds this folder by itself, no need to upload it
+.godot/
+export_credentials.cfg
+
+# exported builds
+build/
+*.zip
+
+# OS junk
+.DS_Store
+Thumbs.db

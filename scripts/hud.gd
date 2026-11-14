@@ -37,14 +37,20 @@ var say_col := Color.WHITE
 var say_t := 0.0
 var say_age := 0.0
 var sub_text := ""
-var hint_text := ""
+var hint_text := ""  # (old one-line hint, not drawn any more)
 var hint_alpha := 1.0
+var tips := []
+var tip_i := 0
+var tip_t := 0.0
+const TIP_TIME := 7.0
+var show_controls := true
 
 
 func _ready() -> void:
 	font = Game.font
 	mouse_filter = MOUSE_FILTER_IGNORE
 	boombox_tex = Game.asset_tex("ui/boombox")
+	_build_tips()
 	for i in Game.characters.size():
 		var tex: Texture2D = Game.asset_tex("characters/" + str(Game.characters[i]["file"]) + "_portrait")
 		if tex:
@@ -67,8 +73,46 @@ func show_burst(id: int, n: int) -> void:
 	bursts[id] = {"n": n, "t": 0.9}
 
 
+func _input(event: InputEvent) -> void:
+	# tab hides / shows the control boxes
+	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_TAB:
+		show_controls = not show_controls
+
+
+func _build_tips() -> void:
+	# [tip, who said it]
+	tips = [
+		["swing a bit early, the game lets you get away with it", "daniel"],
+		["hold swing to charge. full charge = actual missile", "binyamin"],
+		["charging slows you down, so don't do it right next to their ball", "imran"],
+		["hold W + forward when you hit for a flat shot, just W for a steep one", "naeem"],
+		["a white ball is nobody's. whoever hits it first owns it", "imran"],
+		["hold down in the air to drop fast and get under the ball", "binyamin"],
+		["panicking? bunt it. buys you a second", "naeem"],
+		["your own ball can't hurt you, so go wild", "oluwasemilore"],
+		["watch the number on the boombox. big number = get ready", "imran"],
+		["meter flashing? use your special!!", "daniel"],
+		["no aim? it still kinda goes at them. hold up or down to be sneaky", "naeem"],
+		["the ball gets FAST. hitting it back is your best defence", "binyamin"],
+		["bunt it straight up then smash it, works every time (sometimes)", "oluwasemilore"],
+	]
+	if arena:
+		for f in arena.fighters:
+			var ch: Dictionary = Game.characters[f.char_id]
+			var key := ""
+			if Game.is_human(f.id):
+				key = " (" + str(Game.key_names[f.id]["special"]) + ")"
+			tips.append(["%s's special%s: %s" % [str(ch["name"]).to_lower(), key, str(ch["desc"])], "the team"])
+	tips.shuffle()
+	tip_i = 0
+
+
 func _process(delta: float) -> void:
 	t += delta
+	tip_t += delta
+	if tip_t > TIP_TIME:
+		tip_t = 0.0
+		tip_i = (tip_i + 1) % maxi(tips.size(), 1)
 	say_t -= delta
 	say_age += delta
 	for b in bursts:
@@ -124,8 +168,7 @@ func _draw() -> void:
 	_draw_boombox()
 	_draw_bursts()
 	_draw_say()
-	if hint_text != "" and hint_alpha > 0.01:
-		_text(V(0, 290), hint_text, _fs(7), Color(1, 1, 1, 0.85 * hint_alpha), HORIZONTAL_ALIGNMENT_CENTER, size.x, int(3 * u))
+	# controls live in the pause menu now (esc > controls)
 
 
 func _draw_world_fx() -> void:
@@ -133,7 +176,7 @@ func _draw_world_fx() -> void:
 	for f in arena.fighters:
 		if not f.alive or f.swing_t < 0.0 or f.swing_kind != 0:
 			continue
-		var k: float = (f.swing_t - 0.05) / 0.14  # startup / active times from fighter.gd
+		var k: float = (f.swing_t - 0.03) / 0.2  # startup / active times from fighter.gd
 		if k < 0.0 or k > 1.6:
 			continue
 		var a_now: float = f.bat_pivot.rotation.z
@@ -405,3 +448,80 @@ func _draw_say() -> void:
 	draw_string(font, p + Vector2(0, fsz * 0.35), say_text, HORIZONTAL_ALIGNMENT_CENTER, size.x, fsz, Color(say_col, a))
 	if sub_text != "":
 		_text(Vector2(0, V(0, 215).y), sub_text, _fs(10), Color(1, 1, 1, a), HORIZONTAL_ALIGNMENT_CENTER, size.x, int(3 * u))
+
+
+# ---------------- tips + control boxes ----------------
+
+func _draw_tip() -> void:
+	if tips.is_empty() or arena.state == "over":
+		return
+	var a := clampf(minf(tip_t, TIP_TIME - tip_t) * 3.0, 0.0, 1.0)
+	var tip: Array = tips[tip_i]
+	# a little stuck-on note, tilted a touch, with tape
+	var c := V(312, 24)
+	var w := 172.0 * u
+	var h := 34.0 * u
+	draw_set_transform(c, -0.025, Vector2.ONE)
+	draw_rect(Rect2(-w * 0.5 + 3 * u, -h * 0.5 + 3 * u, w, h), Color(0, 0, 0, 0.3 * a))
+	draw_rect(Rect2(-w * 0.5, -h * 0.5, w, h), Color(Game.INK, 0.9 * a))
+	draw_rect(Rect2(-w * 0.5, -h * 0.5, w, 2.0 * u), Color(Color("#f5e04a"), a))
+	draw_set_transform(c + Vector2(-w * 0.5 + 10 * u, -h * 0.5).rotated(-0.025), 0.45, Vector2.ONE)
+	draw_rect(Rect2(Vector2(-9, -3) * u, Vector2(18, 6) * u), Color(1, 1, 1, 0.3 * a))
+	draw_set_transform(c, -0.025, Vector2.ONE)
+	draw_string(font, Vector2(-w * 0.5 + 7 * u, -h * 0.5 + 10 * u), "tip from " + str(tip[1]) + ":", HORIZONTAL_ALIGNMENT_LEFT, -1, _fs(6.5), Color(Color("#f5e04a"), a))
+	draw_multiline_string(font, Vector2(-w * 0.5 + 7 * u, -h * 0.5 + 20 * u), str(tip[0]), HORIZONTAL_ALIGNMENT_LEFT, w - 14 * u, _fs(7.5), 2, Color(1, 1, 1, a))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+func _draw_controls() -> void:
+	var w := 134.0 * u
+	var h := 60.0 * u
+	var y := V(0, 297).y
+	for f in arena.fighters:
+		var right: bool = f.id == 1
+		var x := 6.0 * u if not right else size.x - w - 6.0 * u
+		var ang := 0.02 if not right else -0.02
+		var c := Vector2(x + w * 0.5, y + h * 0.5)
+		draw_set_transform(c, ang, Vector2.ONE)
+		var r := Rect2(-w * 0.5, -h * 0.5, w, h)
+		draw_rect(Rect2(r.position + Vector2(3, 3) * u, r.size), Color(0, 0, 0, 0.3))
+		draw_rect(r, Color(Game.INK, 0.88))
+		draw_rect(Rect2(r.position, Vector2(w, 2.5 * u)), f.color)
+		var tx := r.position.x + 8.0 * u
+		var ty := r.position.y
+		var title := "p1 keys" if f.id == 0 else "p2 keys"
+		if not Game.is_human(f.id):
+			title = "cpu"
+		_text(Vector2(tx, ty + 13.0 * u), title, _fs(10), f.color, HORIZONTAL_ALIGNMENT_LEFT, -1.0, int(3 * u))
+		if f.id == 1 and Game.is_human(1):
+			_text(Vector2(tx + 46.0 * u, ty + 12.0 * u), "(numpad)", _fs(6), Color(1, 1, 1, 0.5))
+		if not Game.is_human(f.id):
+			_text(Vector2(tx, ty + 28.0 * u), "playing on " + str(["easy", "normal", "hard"][Game.cpu_level]), _fs(7.5), Color.WHITE)
+			_text(Vector2(tx, ty + 40.0 * u), "esc > options to change it", _fs(6.5), Color(1, 1, 1, 0.55))
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			continue
+		var k: Dictionary = Game.key_names[f.id]
+		var rows := []
+		if f.id == 0:
+			rows = [["A D", "move", "W", "jump"], [k["swing"], "swing", k["bunt"], "bunt"], [k["special"], "special", "S", "fall"]]
+		else:
+			rows = [["4 6", "move", "8", "jump"], ["1", "swing", "2", "bunt"], ["3", "special", "5", "fall"]]
+		var yy := ty + 26.0 * u
+		for row in rows:
+			var px := tx
+			for cc in 2:
+				px = _cap(px, yy, str(row[cc * 2]), str(row[cc * 2 + 1]))
+				px += 7.0 * u
+			yy += 12.0 * u
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_text(Vector2(0, y + h + 4.0 * u), "tab hides these", _fs(5.5), Color(1, 1, 1, 0.4), HORIZONTAL_ALIGNMENT_CENTER, 140.0 * u)
+
+
+# one white keycap + label, returns where the next one should start
+func _cap(x: float, base_y: float, key: String, what: String) -> float:
+	var fs := _fs(6.5)
+	var kw := maxf(font.get_string_size(key, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 6.0 * u, 12.0 * u)
+	draw_rect(Rect2(x, base_y - 8.0 * u, kw, 10.0 * u), Color.WHITE)
+	draw_string(font, Vector2(x, base_y), key, HORIZONTAL_ALIGNMENT_CENTER, kw, fs, Game.INK)
+	draw_string(font, Vector2(x + kw + 3.0 * u, base_y), what, HORIZONTAL_ALIGNMENT_LEFT, -1, _fs(7), Color.WHITE)
+	return x + kw + 3.0 * u + font.get_string_size(what, HORIZONTAL_ALIGNMENT_LEFT, -1, _fs(7)).x

@@ -2,8 +2,9 @@ extends Node3D
 # the ball. when nobody owns it it falls and bounces like a normal ball,
 # once someone swings at it it flies in straight lines and bounces off everything at full speed
 
-const BASE_SPEED := 15.0
-const MAX_SPEED := 160.0
+const BASE_SPEED := 12.0
+const MAX_SPEED := 120.0
+const CHARGED_MAX := 150.0  # a full charge can push past the normal cap
 const SERVE_GRAVITY := 22.0
 const SLOW_FACTOR := 0.35
 
@@ -139,15 +140,19 @@ func _snap(from: Vector2) -> void:
 
 
 # a proper swing. returns the hitstop so the hitter freezes for the same time
-func struck(by_id: int, from: Vector2, dir: Vector2) -> float:
+# charge = 0..1 from holding swing. a charged hit adds a big chunk of speed on top,
+# and whoever hits it next carries on from that speed
+func struck(by_id: int, from: Vector2, dir: Vector2, charge := 0.0) -> float:
 	if speed < BASE_SPEED:
 		speed = BASE_SPEED
 	else:
-		speed = minf(speed + 3.0 + speed * 0.07, MAX_SPEED)
+		speed = minf(speed + 2.5 + speed * 0.05, MAX_SPEED)
+	if charge > 0.0:
+		speed = minf(speed + (8.0 + speed * 0.3) * charge, CHARGED_MAX)
 	owner_id = by_id
 	_snap(from)
 	launch_vel = dir * speed
-	hitstop = 0.05 + speed * 0.0045
+	hitstop = 0.05 + speed * 0.0045 + charge * 0.12
 	return hitstop
 
 

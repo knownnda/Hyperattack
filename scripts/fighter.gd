@@ -11,10 +11,10 @@ const JUMP_SPEED := 18.0
 const GRAVITY := 42.0
 const FAST_FALL := 85.0
 
-const SWING_STARTUP := 0.05
-const SWING_ACTIVE := 0.14
+const SWING_STARTUP := 0.03
+const SWING_ACTIVE := 0.2
 const SWING_END := 0.2
-const SWING_RANGE := 1.8
+const SWING_RANGE := 2.3
 const VIS := 1.5  # fighters are drawn 1.5x bigger, LLB guys are chunky
 
 const MODEL_HEIGHT := 1.8
@@ -37,6 +37,17 @@ var swing_t := -1.0  # -1 = not swinging
 var aim := 0  # -1 down, 0 straight, 1 up
 var swing_connected := false
 var swing_kind := 0  # 0 = swing, 1 = bunt
+var hit_fwd := false  # holding toward where you're facing when you hit = flatter angle
+
+# charging: hold swing to wind up, let go to swing. more charge = faster ball
+const CHARGE_FULL := 0.8  # seconds to a full charge
+const CHARGE_MAX_HOLD := 1.4  # swings by itself if you hold any longer
+const CHARGE_MIN := 0.12  # anything shorter than this is just a normal tap
+var charging := false
+var charge_t := 0.0
+var charge_level := 0.0  # 0..1 for the swing that's coming / happening
+var _swing_held_prev := false
+var _charge_tick := 0.0
 
 var hitstop := 0.0
 var stun := 0.0
@@ -53,6 +64,9 @@ var swing_buf := 0.0
 var special_buf := 0.0
 var bunt_buf := 0.0
 var bot_wait := 0.0
+var coyote := 0.0  # little grace period to still jump after walking off something
+var since_jump := 9.0  # time since the jump button was pressed
+var _mouse_prev := [false, false]
 
 # visuals
 var rig: Node3D
@@ -61,6 +75,7 @@ var body_parts: Node3D
 var moon: MeshInstance3D
 var tag: Label3D
 var anim_t := 0.0
+var body_depth := 0.8  # how thick the body is front to back (for tucking the bat behind it on menus)
 var run_phase := 0.0
 
 var model: Node3D = null
@@ -86,12 +101,15 @@ func _ready() -> void:
 	_build_extras()
 
 	set_process(preview)
+	if preview:
+		# on the select screen the bat rests behind the character so it doesn't cover their face
+		bat_pivot.position = Vector3(-0.2, 0.85, -0.12 - body_depth - 0.15)
 	update_visual()
 
 
 func _process(delta: float) -> void:
 	# only runs on the menu preview
-	rotation.y = sin(anim_t * 0.7) * 0.5
+	rotation.y = sin(anim_t * 0.7) * 0.25
 	_animate(delta)
 	update_visual()
 
@@ -121,6 +139,8 @@ func tick(delta: float) -> void:
 	var target := move * WALK_SPEED
 	if swinging and on_floor:
 		target *= 0.25  # plant your feet a bit when swinging
+	elif charging:
+		target *= 0.55  # winding up slows you down
 	var accel := GROUND_ACCEL if on_floor else AIR_ACCEL
 	if stun > 0.0:
 		accel = 8.0
@@ -128,10 +148,12 @@ func tick(delta: float) -> void:
 	if not swinging and absf(move) > 0.2:
 		facing = signf(move)
 
+	coyote = 0.1 if on_floor else maxf(coyote - delta, 0.0)
 	if jump_buf > 0.0:
-		if on_floor:
+		if on_floor or (coyote > 0.0 and vel.y <= 0.0):
 			vel.y = JUMP_SPEED
 			on_floor = false
+			coyote = 0.0
 			jump_buf = 0.0
 			arena.dust(pos)
 			Sfx.play("jump", randf_range(0.95, 1.05), -8.0)
@@ -172,8 +194,10 @@ func tick(delta: float) -> void:
 		swing_t += delta
 		if swing_t < SWING_STARTUP + SWING_ACTIVE:
 			aim = in_aim  # you can still steer it until the bat connects
+			hit_fwd = absf(in_move) > 0.3 and signf(in_move) == facing
 		if swing_t > SWING_STARTUP + SWING_ACTIVE + SWING_END:
 			swing_t = -1.0
+			charge_level = 0.0
 	elif swing_buf > 0.0 or bunt_buf > 0.0:
 		swing_kind = 0 if swing_buf > 0.0 else 1
 		swing_buf = 0.0
@@ -182,6 +206,16 @@ func tick(delta: float) -> void:
 		aim = in_aim
 		swing_connected = false
 		restart_anim = true
+		# ball just behind you? turn round so the swing still catches it
+		var b = arena.ball
+		if b.gone_t <= 0.0:
+			var dx: float = b.pos.x - pos.x
+			if signf(dx) != facing and absf(dx) < 3.0 and absf(b.pos.y - (pos.y + 1.4)) < 3.0:
+				facing = signf(dx)
+				rig.scale.x = facing
+		hit_fwd = absf(in_move) > 0.3 and signf(in_move) == facing
+		if swing_kind == 0 and charge_level > 0.5:
+			Sfx.play("swing", 0.7, -4.0)
 		if swing_kind == 0:
 			Sfx.play("swing", randf_range(0.9, 1.15), -10.0)
 		else:
@@ -205,21 +239,72 @@ func _read_input(delta: float) -> void:
 		_bot(delta)
 		return
 
-	var p := "p%d_" % id
-	in_move = Input.get_axis(p + "left", p + "right")
+	# vs cpu: player 1 can use either side of the keyboard (and the mouse)
+	var sets := ["p%d_" % id]
+	if Game.mode == "cpu" and id == 0:
+		sets.append("p1_")
+	since_jump += delta
+	in_move = 0.0
+	var up := false
+	var down := false
+	var swing_held := false
+	for p in sets:
+		in_move += Input.get_axis(p + "left", p + "right")
+		up = up or Input.is_action_pressed(p + "up")
+		down = down or Input.is_action_pressed(p + "down")
+		if Input.is_action_just_pressed(p + "jump"):
+			jump_buf = 0.15
+			since_jump = 0.0
+		if Input.is_action_pressed(p + "swing"):
+			swing_held = true
+		if Input.is_action_just_pressed(p + "bunt"):
+			bunt_buf = 0.18
+		if Input.is_action_just_pressed(p + "special"):
+			special_buf = 0.08
+	in_move = clampf(in_move, -1.0, 1.0)
+	if Game.mode == "cpu" and id == 0:
+		var lmb := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+		var rmb := Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+		swing_held = swing_held or lmb
+		if rmb and not _mouse_prev[1]:
+			special_buf = 0.08
+		_mouse_prev = [lmb, rmb]
+	_charge_input(swing_held, delta)
+
+	# W / up is jump too, so tapping it to jump shouldn't also aim your next swing upward:
+	# only count it as "aim up" once you've been holding it a moment
 	in_aim = 0
-	if Input.is_action_pressed(p + "up"):
+	if up and since_jump > 0.22:
 		in_aim = 1
-	elif Input.is_action_pressed(p + "down"):
+	elif down:
 		in_aim = -1
-	if Input.is_action_just_pressed(p + "jump"):
-		jump_buf = 0.1
-	if Input.is_action_just_pressed(p + "swing"):
-		swing_buf = 0.12
-	if Input.is_action_just_pressed(p + "bunt"):
-		bunt_buf = 0.12
-	if Input.is_action_just_pressed(p + "special"):
-		special_buf = 0.05
+
+
+# press = start winding up, release (or holding too long) = swing with that much charge
+func _charge_input(held: bool, delta: float) -> void:
+	if held and not _swing_held_prev:
+		charging = true
+		charge_t = 0.0
+		_charge_tick = 0.0
+	if charging:
+		if held:
+			charge_t += delta
+			# rising ticks while it charges, then a ping when it's full
+			_charge_tick -= delta
+			if charge_t >= CHARGE_MIN and _charge_tick <= 0.0 and charge_t < CHARGE_FULL:
+				_charge_tick = 0.12
+				Sfx.ui("charge_tick", "", "tick", 0.9 + charge_t, -12.0)
+			if charge_t >= CHARGE_FULL and charge_t - delta < CHARGE_FULL:
+				Sfx.ui("charge_full", "", "tick", 2.2, -6.0)
+		if not held or charge_t >= CHARGE_MAX_HOLD:
+			charging = false
+			charge_level = 0.0 if charge_t < CHARGE_MIN else clampf(charge_t / CHARGE_FULL, 0.0, 1.0)
+			swing_buf = 0.18
+	_swing_held_prev = held
+
+
+func charge_amount() -> float:
+	return clampf(charge_t / CHARGE_FULL, 0.0, 1.0) if charging and charge_t >= CHARGE_MIN else 0.0
 
 
 func hit_center() -> Vector2:
@@ -243,6 +328,8 @@ func get_hit(dir: Vector2) -> void:
 	stun = 0.45
 	hitstop = 0.3
 	swing_t = -1.0
+	charging = false
+	charge_level = 0.0
 	var kx := 1.0 if dir.x >= 0.0 else -1.0
 	vel = Vector2(kx * 12.0, 10.0)
 	on_floor = false
@@ -301,6 +388,8 @@ func _bot(delta: float) -> void:
 				bunt_buf = 0.1
 			else:
 				swing_buf = 0.1
+				# when it's got time, the cpu likes a charged hit too
+				charge_level = randf_range(0.3, 1.0) * [0.3, 0.6, 1.0][lvl] if not threat and randf() < 0.4 else 0.0
 			in_aim = _bot_aim()
 	elif swing_t < 0.0:
 		in_aim = 0
@@ -427,18 +516,56 @@ func update_visual() -> void:
 	elif swing_t >= 0.0:
 		var end_a: float = [-2.4, -1.5, -0.4][aim + 1]
 		if swing_t < SWING_STARTUP:
-			a = lerpf(rest, 2.3, swing_t / SWING_STARTUP)
+			a = lerpf(2.5 if charge_level > 0.0 else rest, 2.3, swing_t / SWING_STARTUP)
 		elif swing_t < SWING_STARTUP + SWING_ACTIVE:
 			a = lerpf(2.3, end_a, ease((swing_t - SWING_STARTUP) / SWING_ACTIVE, 0.4))
 		else:
 			a = lerpf(end_a, rest, clampf((swing_t - SWING_STARTUP - SWING_ACTIVE) / SWING_END, 0.0, 1.0))
-	bat_pivot.rotation.z = a
+	if charging and swing_t < 0.0:
+		var ca := charge_amount()
+		a = lerpf(rest, 2.5, minf(1.0, charge_t / 0.15)) + sin(anim_t * 60.0) * 0.06 * ca
+	bat_pivot.rotation.z = _limit_bat(a)
 
-	rig.position.x = randf_range(-0.07, 0.07) if hitstop > 0.0 else 0.0
+	if hitstop > 0.0:
+		rig.position.x = randf_range(-0.07, 0.07)
+	elif charging:
+		rig.position.x = randf_range(-1.0, 1.0) * 0.05 * charge_amount()  # shaking with effort
+	else:
+		rig.position.x = 0.0
 	visible = alive and (invuln <= 0.0 or int(invuln * 14.0) % 2 == 0)
 
 	if moon:
 		moon.position = Vector3(cos(anim_t * 3.0) * 0.65, 1.55 + sin(anim_t * 6.0) * 0.1, sin(anim_t * 3.0) * 0.65)
+
+
+# where the end of the bat would be (world x/y) at bat angle a
+func _bat_tip(a: float) -> Vector2:
+	var vs := scale.x
+	var pivot := pos + Vector2(facing * 0.1, 0.85) * vs
+	return pivot + Vector2(-sin(a) * facing, cos(a)) * 1.25 * vs
+
+
+func _bat_ok(a: float) -> bool:
+	var tip := _bat_tip(a)
+	var hw: float = arena.half_w
+	var top: float = arena.height
+	return tip.y >= 0.08 and tip.y <= top - 0.05 and absf(tip.x) <= hw - 0.05
+
+
+# keep the bat out of the floor, walls and roof: if the swing would poke through,
+# ease it back toward upright (or level, if we're right up at the roof)
+func _limit_bat(a: float) -> float:
+	if arena == null or _bat_ok(a):
+		return a
+	var b := a
+	for i in 14:
+		b = lerpf(b, 0.0, 0.2)
+		if _bat_ok(b):
+			return b
+	for flat in [-PI / 2.0, PI / 2.0]:
+		if _bat_ok(flat):
+			return flat
+	return b
 
 
 func _mat(c: Color, glow := 0.0) -> StandardMaterial3D:
@@ -458,7 +585,7 @@ func _part(mesh: Mesh, m: Material, at: Vector3, parent: Node3D = null) -> MeshI
 
 func _build_bat() -> void:
 	bat_pivot = Node3D.new()
-	bat_pivot.position = Vector3(0.1, 0.85, 0.45)
+	bat_pivot.position = Vector3(0.1, 0.85, 0.06)  # right on the play plane, in front of the body
 	rig.add_child(bat_pivot)
 	var bat := CylinderMesh.new()
 	bat.top_radius = 0.09
@@ -518,7 +645,12 @@ func _fit_model() -> void:
 	var s := MODEL_HEIGHT / maxf(box.size.y, 0.0001)
 	model.scale = Vector3.ONE * s
 	var c := box.get_center()
-	model.position = Vector3(-c.x * s, -box.position.y * s, -c.z * s)
+	# push the body back so its front sits just behind the play plane (z = 0).
+	# the bat and the ball live on that plane, so they never sink into anyone.
+	# p2 sits a touch further back so two overlapping bodies don't flicker
+	var front := (c.z + box.size.z * 0.5) * s
+	body_depth = box.size.z * s
+	model.position = Vector3(-c.x * s, -box.position.y * s, -front - 0.12 - id * 0.25)
 
 
 func _map_anims() -> void:
@@ -548,6 +680,7 @@ func _pick(names: PackedStringArray, keys: Array) -> String:
 func _build_body() -> void:
 	# placeholder: capsule + head + a visor so you can see which way it faces
 	body_parts = Node3D.new()
+	body_parts.position.z = -0.52 - id * 0.25  # behind the play plane, same idea as the models
 	rig.add_child(body_parts)
 	var body := CapsuleMesh.new()
 	body.radius = 0.38
@@ -574,6 +707,8 @@ func _build_body() -> void:
 
 
 func _build_extras() -> void:
+	if preview:
+		return  # no floor ring on the select screen
 	# glowing ring under your feet so you can always find yourself
 	var ring := TorusMesh.new()
 	ring.inner_radius = 0.45

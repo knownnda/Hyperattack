@@ -22,22 +22,42 @@ func _ready() -> void:
 	sounds["float"] = _synth(0.5, _float)
 	sounds["tick"] = _synth(0.05, _tick)
 
-	# your own sounds win over the generated ones
-	for key in sounds.keys():
-		var custom = Game.asset_any("sfx/" + str(key), ["wav", "ogg", "mp3"])
-		if custom is AudioStream:
-			sounds[key] = custom
-	# extra slots that are silent unless you add a file for them
-	for extra in ["menu_move", "menu_select", "menu_back", "ready", "go", "win"]:
-		var custom = Game.asset_any("sfx/" + extra, ["wav", "ogg", "mp3"])
-		if custom is AudioStream:
-			sounds[extra] = custom
+	# every file in assets/sfx gets loaded by its name (hit.wav -> "hit").
+	# same name as a built-in sound = replaces it. any other name = a new sound,
+	# e.g. menu_select_versus.wav only plays when you pick "versus"
+	var dir := DirAccess.open("res://assets/sfx")
+	if dir:
+		for f in dir.get_files():
+			# exported games list imported files as name.wav.import
+			var fname: String = str(f).trim_suffix(".import").trim_suffix(".remap")
+			if not (fname.get_extension().to_lower() in ["wav", "ogg", "mp3"]):
+				continue
+			var res = load("res://assets/sfx/" + fname)
+			if res is AudioStream:
+				sounds[fname.get_basename().to_lower()] = res
 
 	for i in 10:
 		var p := AudioStreamPlayer.new()
 		p.bus = "SFX"
 		add_child(p)
 		voices.append(p)
+
+
+# menu / ui sounds. tries the most specific file first:
+#   <kind>_<item>   e.g. menu_select_versus, menu_select_options
+#   <kind>          e.g. menu_select
+# and if you haven't added either, plays the built-in placeholder sound instead
+func ui(kind: String, item := "", fallback := "", pitch := 1.0, db := 0.0) -> void:
+	if item != "":
+		var specific := (kind + "_" + item).to_lower().replace(" ", "_")
+		if sounds.has(specific):
+			play(specific)
+			return
+	if sounds.has(kind):
+		play(kind)
+		return
+	if fallback != "":
+		play(fallback, pitch, db)
 
 
 func play(sound: String, pitch := 1.0, db := 0.0) -> void:

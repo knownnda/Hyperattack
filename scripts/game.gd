@@ -10,10 +10,18 @@ const SAVE_PATH := "user://hyper_attack.cfg"
 # "turn" is how far the model gets spun round so it faces the right way (radians)
 # the ability goes with the slot: 0 time stop, 1 double jump, 2 zero-g, 3 slow ball
 var characters := [
-	{"name": "NERDO", "file": "nerdo", "turn": -0.6, "ability": "TIME STOP", "desc": "freeze them. keep swinging.", "cost": 100.0},
-	{"name": "MOUSE", "file": "mouse", "turn": PI / 2.0 - 0.6, "ability": "DOUBLE JUMP", "desc": "always gets a second jump. special = super hop.", "cost": 35.0},
-	{"name": "PRIVATE", "file": "private", "turn": PI / 2.0 - 0.6, "ability": "ZERO-G", "desc": "ball floats and goes neutral. scramble for it.", "cost": 75.0},
-	{"name": "MACDONALD", "file": "macdonald", "turn": PI / 2.0 - 0.6, "ability": "SLOW BALL", "desc": "ball crawls for 3.5s. breathe.", "cost": 60.0},
+	{"name": "NERDO", "file": "nerdo", "turn": -0.6, "ability": "TIME STOP", "type": "Head", "cost": 100.0,
+		"desc": "freeze them. keep swinging.",
+		"bio": "Worked out the angle of every bounce in the arena before his first match. Nobody has seen what's behind the glasses. His special stops time for everyone but him, so he can line up a hit while the ball hangs in the air."},
+	{"name": "MOUSE", "file": "mouse", "turn": PI / 2.0 - 0.6, "ability": "DOUBLE JUMP", "type": "Mouse", "cost": 35.0,
+		"desc": "always gets a second jump. special = super hop.",
+		"bio": "Works the fryer at the burger place on weekends and plays ball the rest of the time. Small, fast and hardly ever on the ground. He always has a second jump, and his special launches him even higher."},
+	{"name": "PRIVATE", "file": "private", "turn": PI / 2.0 - 0.6, "ability": "ZERO-G", "type": "Penguin", "cost": 75.0,
+		"desc": "ball floats and goes neutral. scramble for it.",
+		"bio": "The youngest of a very serious penguin squad, and the only one who actually enjoys this. Follows orders well and takes hits badly. His special turns gravity off, so the ball floats free and anyone can grab it."},
+	{"name": "MACDONALD", "file": "macdonald", "turn": PI / 2.0 - 0.6, "ability": "SLOW BALL", "type": "Cat", "cost": 60.0,
+		"desc": "ball crawls for 3.5s. breathe.",
+		"bio": "Runs the snack bar by the arena and has never once been in a hurry. Waits for everyone else to panic. His special drags the ball down to a crawl so he can pick the perfect shot."},
 ]
 
 var colors := [Color("#ff3b5c"), Color("#2ec4ff")]
@@ -37,7 +45,7 @@ var menu_start := "title"  # where the frontend opens: "title" or "main"
 
 var key_names := [
 	{"jump": "W", "swing": "F", "bunt": "G", "special": "H"},
-	{"jump": "UP", "swing": "K", "bunt": "L", "special": ";"},
+	{"jump": "NUM 8", "swing": "NUM 1", "bunt": "NUM 2", "special": "NUM 3"},
 ]
 
 var font: FontVariation
@@ -117,18 +125,30 @@ func asset_scene(base: String) -> PackedScene:
 	return r as PackedScene
 
 
-func play_music(name_: String) -> void:
+# plays assets/music/<name>.ogg (or mp3 / wav). remembers where each track was,
+# so pausing a match and coming back carries on from the same spot
+var _music_pos := {}
+
+
+func play_music(name_: String, fallback := "") -> void:
 	if name_ == _music_name and music.playing:
 		return
-	_music_name = name_
 	var s = asset_any("music/" + name_, ["ogg", "mp3", "wav"])
+	if s == null and fallback != "":
+		name_ = fallback
+		s = asset_any("music/" + name_, ["ogg", "mp3", "wav"])
+	if name_ == _music_name and music.playing:
+		return
+	if music.playing and _music_name != "":
+		_music_pos[_music_name] = music.get_playback_position()
+	_music_name = name_
 	if s == null:
 		music.stop()  # no music unless you add some
 		return
 	if "loop" in s:
 		s.loop = true
 	music.stream = s
-	music.play()
+	music.play(float(_music_pos.get(name_, 0.0)))
 
 
 # ---------------- settings / save ----------------
@@ -295,7 +315,9 @@ func _setup_input() -> void:
 	# W / up is jump AND "aim up" when you hold it during a swing
 	var keys := [
 		{"left": [KEY_A], "right": [KEY_D], "up": [KEY_W], "down": [KEY_S], "jump": [KEY_W, KEY_SPACE], "swing": [KEY_F], "bunt": [KEY_G], "special": [KEY_H]},
-		{"left": [KEY_LEFT], "right": [KEY_RIGHT], "up": [KEY_UP], "down": [KEY_DOWN], "jump": [KEY_UP], "swing": [KEY_K, KEY_KP_1], "bunt": [KEY_L, KEY_KP_2], "special": [KEY_SEMICOLON, KEY_KP_3]},
+		# p2 lives on the numpad: 4/6 move, 8 jump, 5 fall, 1 swing, 2 bunt, 3 special
+		# (arrows + K / L / ; still work for laptops without one)
+		{"left": [KEY_KP_4, KEY_LEFT], "right": [KEY_KP_6, KEY_RIGHT], "up": [KEY_KP_8, KEY_UP], "down": [KEY_KP_5, KEY_DOWN], "jump": [KEY_KP_8, KEY_UP], "swing": [KEY_KP_1, KEY_K], "bunt": [KEY_KP_2, KEY_L], "special": [KEY_KP_3, KEY_SEMICOLON]},
 	]
 
 	for i in 2:

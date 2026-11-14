@@ -5,6 +5,9 @@ const FighterScript := preload("res://scripts/fighter.gd")
 const BallScript := preload("res://scripts/ball.gd")
 const HudScript := preload("res://scripts/hud.gd")
 const HitShader := preload("res://scripts/hitframe.gdshader")
+const PauseScript := preload("res://scripts/pause.gd")
+const ResultsScript := preload("res://scripts/results.gd")
+const RESULTS_DELAY := 3.8  # roughly how long the final KO sound runs before the results come up
 
 var half_w := 12.0
 var height := 11.5
@@ -21,11 +24,18 @@ var punch_at := Vector2.ZERO
 var time_stop_t := 0.0
 var time_stopper = null
 
-var state := "intro"  # intro -> play -> over
+var state := "brief"  # brief (controls screen) -> intro -> play -> over
 var state_t := 0.0
 var debris := []
 
 var hud
+var pause
+var results
+var elapsed := 0.0  # match time, for the results screen
+var stats := {}  # per player: kos, hits, bunts, peak speed, charged hits
+var final_winner = null
+var final_loser = null
+var resume_lock := 0.0
 var fx_mat: ShaderMaterial
 var fx_rect: ColorRect
 var hit_fx_t := 0.0
@@ -36,6 +46,9 @@ var robots := []
 
 func _ready() -> void:
 	time_left = Game.match_time
+	for i in 2:
+		stats[i] = {"kos": 0, "hits": 0, "bunts": 0, "peak": 0.0, "charged": 0}
+	Game._music_pos.erase("match")  # a new match starts its song from the top
 	Game.play_music("match")
 	_build_world()
 	_spawn_fighters()
@@ -44,7 +57,7 @@ func _ready() -> void:
 	add_child(ball)
 	ball.serve()
 	_build_hud()
-	hud.say("READY?", Color.WHITE, 1.3)
+	pause.show_brief()
 
 
 func _physics_process(delta: float) -> void:
@@ -56,10 +69,28 @@ func _physics_process(delta: float) -> void:
 	_update_camera(delta)
 	_update_fx(delta)
 
+	if state == "brief":
+		if Input.is_action_just_pressed("ui_accept"):
+			start_from_brief()
+		elif Input.is_action_just_pressed("quit"):
+			Game.goto("res://scenes/select.tscn")
+			set_physics_process(false)
+		return
+
 	if Input.is_action_just_pressed("quit"):
-		Game.menu_start = "main"
-		Game.goto("res://scenes/frontend.tscn")
-		set_physics_process(false)
+		if state == "over":
+			Game.menu_start = "main"
+			Game.goto("res://scenes/frontend.tscn")
+			set_physics_process(false)
+		elif pause.open:
+			pause.on_escape()
+		else:
+			pause.toggle()
+		return
+	if pause.open:
+		return
+	if resume_lock > 0.0:
+		resume_lock -= delta
 		return
 
 	match state:
@@ -71,14 +102,14 @@ func _physics_process(delta: float) -> void:
 				Sfx.play("special", 1.4, -4.0)
 			return
 		"over":
-			for f in fighters:
-				f.tick(delta)
-			if state_t > 1.5 and _anyone_pressed():
-				Game.goto("res://scenes/select.tscn")
-				set_physics_process(false)
+			# final KO: everything frozen while the sound plays, then the results screen
+			if state_t > RESULTS_DELAY and not results.shown:
+				hud.say_t = 0.0
+				results.show_results(final_winner, final_loser)
 			return
 
 	hud.hint_alpha = clampf(1.0 - (state_t - 5.0) * 0.5, 0.0, 1.0)
+	elapsed += delta
 	if Game.match_time > 0.0:
 		time_left -= delta
 	if Game.match_time > 0.0 and time_left <= 0.0:
@@ -97,6 +128,17 @@ func _physics_process(delta: float) -> void:
 	for f in fighters:
 		f.tick(delta)
 	ball.tick(delta)
+
+
+# enter (or a click) on the controls screen
+func start_from_brief() -> void:
+	if state != "brief":
+		return
+	pause.hide_brief()
+	state = "intro"
+	state_t = 0.0
+	hud.say("READY?", Color.WHITE, 1.3)
+	Sfx.ui("match_start", "", "special", 1.1, -6.0)
 
 
 func _anyone_pressed() -> bool:
@@ -135,29 +177,50 @@ func _check_swing(f) -> bool:
 		f.hitstop = ball.bunted(f.hit_center(), f.facing)
 		hud.ring(ball.pos, Color.WHITE, false)
 		f.meter = minf(f.meter + 5.0, 100.0)
+		stats[f.id]["bunts"] += 1
 		Sfx.play("bounce", 0.6, -2.0)
 		return true
 
 	var dir := Vector2(f.facing, 0.0)
-	if f.aim == 1:
-		dir = Vector2(f.facing, 1.0).normalized()
-	elif f.aim == -1:
-		dir = Vector2(f.facing, -1.0).normalized()
+	if f.aim == 0:
+		# aim assist: a plain swing bends toward the other player if they're in front of you
+		var foe = _fighter_by_id(1 - f.id)
+		if foe and foe.alive:
+			var to: Vector2 = foe.pos + Vector2(0.0, 1.3) - ball.pos
+			if signf(to.x) == f.facing:
+				var ang := clampf(atan2(to.y, absf(to.x)), -0.5, 0.5)
+				dir = Vector2(f.facing * cos(ang), sin(ang))
+	# up / down aim. holding forward too gives a flatter angle, just up / down is steep
+	if f.aim != 0:
+		var steep := 0.52 if f.hit_fwd else 0.95
+		if f.aim == -1 and f.on_floor:
+			steep = 0.52  # on the ground a steep spike just dies in the floor
+		dir = Vector2(f.facing * cos(steep), sin(steep) * f.aim)
 
-	var stop: float = ball.struck(f.id, f.hit_center() + dir * 0.3, dir)
+	var charge: float = f.charge_level
+	f.charge_level = 0.0
+	var stop: float = ball.struck(f.id, f.hit_center() + dir * 0.3, dir, charge)
 	rally += 1
 	if rally >= 2:
 		hud.show_burst(f.id, rally)
 	f.hitstop = stop
 	f.meter = minf(f.meter + 18.0, 100.0)
+	stats[f.id]["hits"] += 1
+	stats[f.id]["peak"] = maxf(stats[f.id]["peak"], ball.speed)
+	if charge > 0.6:
+		stats[f.id]["charged"] += 1
 	var sp: float = ball.speed
 	add_shake(0.05 + sp * 0.004)
 	_burst(ball.pos, f.color, 4 + int(sp / 15.0))
 	hud.ring(ball.pos, Color.WHITE if sp < 30.0 else f.color.lightened(0.4), sp >= 30.0)
 	Sfx.play("hit", clampf(0.8 + sp / 120.0, 0.8, 1.6), 0.0)
-	if sp >= 30.0:
+	if sp >= 30.0 or charge > 0.6:
 		_flash(f.color, stop)
 		_punch_in(clampf(sp / 95.0, 0.25, 1.0))
+	if charge > 0.6:
+		hud.ring(ball.pos, Color.WHITE, true)
+		add_shake(0.3 * charge)
+		Sfx.ui("charged_hit", "", "ko", 1.6, -6.0)
 	return true
 
 
@@ -169,6 +232,7 @@ func _ko(f) -> void:
 	var attacker = _fighter_by_id(ball.owner_id)
 	if attacker:
 		attacker.meter = minf(attacker.meter + 25.0, 100.0)
+		stats[attacker.id]["kos"] += 1
 
 	_burst(ball.pos, f.color, 26)
 	_burst(ball.pos, Color.WHITE, 10)
@@ -179,7 +243,8 @@ func _ko(f) -> void:
 	_punch_in(1.0)
 	ball.vanish()
 	shake = 0.8
-	Sfx.play("ko", 1.0, 0.0)
+	if f.stocks > 0:
+		Sfx.play("ko", 1.0, 0.0)  # the last one gets the big final KO sound instead
 
 	if f.stocks <= 0:
 		f.alive = false
@@ -199,11 +264,15 @@ func _check_winner() -> void:
 	Game.save_settings()
 	ball.vanish()
 	if left.size() == 1:
-		hud.say(Game.who(left[0].id) + " WINS", left[0].color, 99999.0)
-	else:
-		hud.say("DRAW", Color.WHITE, 99999.0)
-	hud.sub_text = "swing / enter to go back"
-	Sfx.play("special", 0.8, 0.0)
+		final_winner = left[0]
+		final_loser = fighters[1 - left[0].id]
+	# big GAME! + the final KO sound, then the results screen a few seconds later
+	hud.sub_text = ""
+	hud.say("GAME!", Color("#f5e04a"), RESULTS_DELAY)
+	_flash(Color.WHITE, 0.4)
+	_punch_in(1.0)
+	shake = 1.0
+	Sfx.ui("final_ko", "", "ko", 0.7, 0.0)
 
 
 func _fighter_by_id(fid: int):
@@ -397,8 +466,26 @@ func _build_hud() -> void:
 	hud_layer.add_child(hud)
 	hud.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+	var pause_layer := CanvasLayer.new()
+	pause_layer.layer = 5
+	add_child(pause_layer)
+	pause = PauseScript.new()
+	pause.arena = self
+	pause_layer.add_child(pause)
+	pause.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var results_layer := CanvasLayer.new()
+	results_layer.layer = 6
+	add_child(results_layer)
+	results = ResultsScript.new()
+	results.arena = self
+	results_layer.add_child(results)
+	results.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
 	var k0: Dictionary = Game.key_names[0]
 	var t := "P1   A/D move   W jump   S down   %s swing   %s bunt   %s special" % [k0["swing"], k0["bunt"], k0["special"]]
+	if Game.mode == "cpu":
+		t += "      (arrow keys + K / L / ; and the mouse work too)"
 	if Game.mode == "2p":
 		var k1: Dictionary = Game.key_names[1]
 		t += "        P2   arrows   %s swing   %s bunt   %s special" % [k1["swing"], k1["bunt"], k1["special"]]

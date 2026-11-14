@@ -11,6 +11,11 @@ var flash := 0.0
 var slide := []  # how far each button is poked out (selected one slides right)
 var back_rect := Rect2()
 var lock_t := 0.0  # ignore input for a moment after switching screens
+var band_k := 0.0  # 0 = title layout, 1 = menu layout, animates between
+var appear := 0.0  # time since this screen opened (for fly-ins)
+var pop_t := 1.0  # time since the selection last changed
+var prev_sel := -1
+var logo_shift := Vector2.ZERO  # how far the title stuff has slid left
 
 var logo: Texture2D
 var title_bg: Texture2D
@@ -27,6 +32,8 @@ func _ready() -> void:
 	menu_bg = Game.asset_tex("ui/menu_bg")
 	profile_pic = Game.asset_tex("ui/profile")
 	state = Game.menu_start
+	band_k = 0.0 if state == "title" else 1.0
+	appear = 1.0
 	Game.play_music("menu")
 	_reset_slide()
 
@@ -68,6 +75,12 @@ func _pressed(names: Array) -> bool:
 
 func _process(delta: float) -> void:
 	t += delta
+	appear += delta
+	pop_t += delta
+	if sel != prev_sel:
+		prev_sel = sel
+		pop_t = 0.0
+	band_k = move_toward(band_k, 0.0 if state == "title" else 1.0, delta / 0.45)
 	flash = maxf(flash - delta * 4.0, 0.0)
 	for i in slide.size():
 		slide[i] = lerpf(slide[i], 22.0 if i == sel else 0.0, 1.0 - exp(-18.0 * delta))
@@ -99,7 +112,7 @@ func _process(delta: float) -> void:
 	for i in items.size():
 		if _button_rect(i).has_point(m) and sel != i:
 			sel = i
-			Sfx.play("tick", 1.4, -10.0)
+			Sfx.ui("menu_hover", "", "tick", 1.4, -10.0)
 
 
 func _input(event: InputEvent) -> void:
@@ -107,9 +120,10 @@ func _input(event: InputEvent) -> void:
 		var any: bool = (event is InputEventKey or event is InputEventJoypadButton or event is InputEventMouseButton) and event.is_pressed() and not event.is_echo()
 		if any:
 			_go_state("main")
-			Sfx.play("special", 1.3, -4.0)
-			Sfx.play("menu_select")
-			flash = 1.0
+			if not Sfx.sounds.has("menu_start"):
+				Sfx.play("swing", 0.8, -2.0)
+			Sfx.ui("menu_start", "", "special", 1.3, -8.0)
+			flash = 0.25
 			get_viewport().set_input_as_handled()
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
@@ -119,7 +133,8 @@ func _input(event: InputEvent) -> void:
 		for i in _items().size():
 			if _button_rect(i).has_point(event.position):
 				sel = i
-				if state == "options":
+				# clicking a setting changes it, clicking "back" goes back
+				if state == "options" and i < _items().size() - 1:
 					_change_option(1)
 				else:
 					_confirm()
@@ -130,20 +145,23 @@ func _move(d: int, n: int) -> void:
 	if n == 0:
 		return
 	sel = (sel + d + n) % n
-	Sfx.play("tick", 1.3, -8.0)
-	Sfx.play("menu_move")
+	Sfx.ui("menu_move", "", "tick", 1.3, -8.0)
 
 
 func _go_state(s: String) -> void:
 	state = s
 	sel = 0
-	lock_t = 0.15
+	appear = 0.0
+	pop_t = 0.0
+	prev_sel = 0
+	lock_t = 0.25 if s == "main" and band_k < 1.0 else 0.15
 	_reset_slide()
 
 
 func _confirm() -> void:
-	Sfx.play("hit", 1.5, -10.0)
-	Sfx.play("menu_select")
+	var items_now := _items()
+	var picked: String = str(items_now[sel]).get_slice("<", 0).strip_edges() if sel < items_now.size() else state
+	Sfx.ui("menu_select", picked, "hit", 1.5, -10.0)
 	match state:
 		"main":
 			var item: String = _items()[sel]
@@ -172,8 +190,7 @@ func _confirm() -> void:
 
 
 func _back() -> void:
-	Sfx.play("tick", 0.8, -8.0)
-	Sfx.play("menu_back")
+	Sfx.ui("menu_back", state, "tick", 0.8, -8.0)
 	match state:
 		"main":
 			_go_state("title")
@@ -207,7 +224,7 @@ func _change_option(d: int) -> void:
 		_:
 			return
 	Game.apply_settings()
-	Sfx.play("tick", 1.6, -8.0)
+	Sfx.ui("menu_change", "", "tick", 1.6, -8.0)
 
 
 # ---------------- drawing ----------------
@@ -224,7 +241,7 @@ func _button_geom(i: int) -> Array:
 	if state == "main" and _items().size() > 5:
 		top = 58.0 + 41.0 * i
 	if state == "options":
-		top = 50.0 + 40.0 * i
+		top = 44.0 + 37.0 * i
 		left = 150.0 - 9.0 * i
 		right = 335.0 - 4.0 * i + (slide[i] if i < slide.size() else 0.0)
 	return [left, right, top]
@@ -240,36 +257,64 @@ func _button_rect(i: int) -> Rect2:
 func _draw() -> void:
 	var u := size.y / 360.0
 	var f: Font = Game.font
+	var k := smoothstep(0.0, 1.0, band_k)
 
-	if state == "title":
-		UI.draw_bg(self, size, t, title_bg, "title")
-		_draw_logo(_v(320, 140), 120.0 * u)
-		if fmod(t, 1.2) < 0.85:
+	UI.draw_bg(self, size, t, title_bg if k < 0.5 else menu_bg, k)
+
+	# title bits slide off to the left as the band moves
+	if k < 1.0:
+		var a := clampf(1.0 - k * 1.6, 0.0, 1.0)
+		logo_shift = Vector2(-260.0 * u * k, 0)
+		draw_set_transform(logo_shift, 0.0, Vector2.ONE)
+		modulate_draw_logo(a)
+		if state == "title" and fmod(t, 1.2) < 0.85:
 			var p := _v(0, 330)
 			p.x = 0.0
-			draw_string_outline(f, p, "- Press Any Button -", HORIZONTAL_ALIGNMENT_CENTER, size.x, int(15 * u), int(4 * u), UI.BLACK)
-			draw_string(f, p, "- Press Any Button -", HORIZONTAL_ALIGNMENT_CENTER, size.x, int(15 * u), Color.WHITE)
+			draw_string_outline(f, p, "- Press Any Button -", HORIZONTAL_ALIGNMENT_CENTER, size.x, int(15 * u), int(4 * u), Color(UI.BLACK, a))
+			draw_string(f, p, "- Press Any Button -", HORIZONTAL_ALIGNMENT_CENTER, size.x, int(15 * u), Color(1, 1, 1, a))
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+	if state == "title":
 		_draw_flash()
 		return
 
-	UI.draw_bg(self, size, t, menu_bg, "menu")
-
+	# menu bits come in once the band is mostly across
+	var drop := clampf((appear - 0.2) / 0.25, 0.0, 1.0)
 	var header := {"main": "MAIN MENU", "options": "OPTIONS", "howto": "HOW TO PLAY", "credits": "CREDITS"}
-	UI.draw_header(self, size, f, header.get(state, ""))
+	UI.draw_header(self, size, f, header.get(state, ""), UI.ease_out_back(drop))
 
 	if state == "howto":
+		_slide_panel(drop)
 		_draw_howto()
 	elif state == "credits":
+		_slide_panel(drop)
 		_draw_credits()
 	else:
 		var items := _items()
 		for i in items.size():
 			var g := _button_geom(i)
-			UI.draw_button(self, size, f, g[0], g[1], g[2], items[i], i == sel)
+			var ki := clampf((appear - 0.12 - i * 0.045) / 0.28, 0.0, 1.0)
+			var xoff := -320.0 * (1.0 - UI.ease_out_back(ki))
+			UI.draw_button(self, size, f, g[0], g[1], g[2], items[i], i == sel, t, pop_t / 0.22, xoff)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
+	draw_set_transform(Vector2(0, 60.0 * u * (1.0 - UI.ease_out_back(drop))), 0.0, Vector2.ONE)
 	_draw_profile()
 	back_rect = UI.draw_back_arrow(self, size)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	_draw_flash()
+
+
+func _slide_panel(drop: float) -> void:
+	var u := size.y / 360.0
+	draw_set_transform(Vector2(420.0 * u * (1.0 - UI.ease_out_back(drop)), 0), 0.0, Vector2.ONE)
+
+
+func modulate_draw_logo(a: float) -> void:
+	if a <= 0.0:
+		return
+	var u := size.y / 360.0
+	_draw_logo(_v(320, 140), 120.0 * u, a)
 
 
 func _draw_flash() -> void:
@@ -277,29 +322,29 @@ func _draw_flash() -> void:
 		draw_rect(Rect2(Vector2.ZERO, size), Color(1, 1, 1, flash * 0.8))
 
 
-func _draw_logo(c: Vector2, r: float) -> void:
+func _draw_logo(c: Vector2, r: float, a := 1.0) -> void:
 	if logo:
 		var ls := logo.get_size()
 		var sc := (r * 2.0) / maxf(ls.x, ls.y)
-		draw_texture_rect(logo, Rect2(c - ls * sc * 0.5, ls * sc), false)
+		draw_texture_rect(logo, Rect2(c - ls * sc * 0.5, ls * sc), false, Color(1, 1, 1, a))
 		return
 	# placeholder logo: spiky badge + the name
 	var pts := PackedVector2Array()
 	for i in 24:
-		var a := i * TAU / 24.0 - PI / 2.0
+		var ang := i * TAU / 24.0 - PI / 2.0
 		var rr := r * (1.0 if i % 2 == 0 else 0.72) * (1.0 + 0.03 * sin(t * 3.0 + i))
-		pts.append(c + Vector2(cos(a) * rr * 1.15, sin(a) * rr * 0.95))
-	draw_colored_polygon(pts, Color("#0f4f6b"))
-	draw_polyline(pts + PackedVector2Array([pts[0]]), UI.CYAN, r * 0.05)
-	draw_circle(c, r * 0.32, Color.WHITE)
-	draw_arc(c, r * 0.32, 0.0, TAU, 32, UI.BLACK, r * 0.04)
-	draw_circle(c, r * 0.1, Color("#ff3b5c"))
+		pts.append(c + Vector2(cos(ang) * rr * 1.15, sin(ang) * rr * 0.95))
+	draw_colored_polygon(pts, Color(Color("#0f4f6b"), a))
+	draw_polyline(pts + PackedVector2Array([pts[0]]), Color(UI.CYAN, a), r * 0.05)
 	var f: Font = Game.font
 	var fs := int(r * 0.42)
-	for row in [["HYPER", -0.32], ["ATTACK", 0.62]]:
-		var p := c + Vector2(-r * 1.4, r * float(row[1]))
-		draw_string_outline(f, p, row[0], HORIZONTAL_ALIGNMENT_CENTER, r * 2.8, fs, int(r * 0.1), UI.BLACK)
-		draw_string(f, p, row[0], HORIZONTAL_ALIGNMENT_CENTER, r * 2.8, fs, UI.CYAN.lightened(0.4))
+	# words tilted a little to the right, drawn around the logo centre
+	draw_set_transform(c + logo_shift, 0.1, Vector2.ONE)
+	for row in [["HYPER", -0.06], ["ATTACK", 0.38]]:
+		var p := Vector2(-r * 1.4, r * float(row[1]))
+		draw_string_outline(f, p, row[0], HORIZONTAL_ALIGNMENT_CENTER, r * 2.8, fs, int(r * 0.1), Color(UI.BLACK, a))
+		draw_string(f, p, row[0], HORIZONTAL_ALIGNMENT_CENTER, r * 2.8, fs, Color(UI.CYAN.lightened(0.4), a))
+	draw_set_transform(logo_shift, 0.0, Vector2.ONE)
 
 
 func _draw_profile() -> void:
@@ -322,30 +367,47 @@ func _draw_profile() -> void:
 
 
 func _draw_howto() -> void:
+	# plain outlined text in the menu font, no boxes. steps first, then everyone's keys
 	var u := size.y / 360.0
 	var f: Font = Game.font
-	draw_colored_polygon(PackedVector2Array([_v(120, 45), _v(560, 45), _v(545, 300), _v(105, 300)]), Color(UI.BLACK, 0.92))
-	draw_polyline(PackedVector2Array([_v(120, 45), _v(560, 45), _v(545, 300), _v(105, 300), _v(120, 45)]), Color.WHITE, 1.5 * u)
-	var k0: Dictionary = Game.key_names[0]
-	var k1: Dictionary = Game.key_names[1]
-	var lines := [
-		["the ball", UI.CYAN],
-		["hit the ball and it turns your colour and speeds up.", Color.WHITE],
-		["if the other player's ball touches you, you lose a life.", Color.WHITE],
-		["hold up or down while you swing to aim. bunt pops it up soft.", Color.WHITE],
-		["", Color.WHITE],
-		["p1", Game.colors[0]],
-		["A D move    W jump    S down    %s swing    %s bunt    %s special" % [k0["swing"], k0["bunt"], k0["special"]], Color.WHITE],
-		["p2", Game.colors[1]],
-		["arrows move    UP jump    %s swing    %s bunt    %s special" % [k1["swing"], k1["bunt"], k1["special"]], Color.WHITE],
-		["", Color.WHITE],
-		["gamepad:  A jump    X swing    B bunt    Y special", Color(1, 1, 1, 0.7)],
+	var steps := [
+		["1", "smack it", "tap swing to hit. hold swing to charge, let go for a way faster hit"],
+		["2", "aim it", "hold W to send it up, S to send it down. add forward for a flatter angle"],
+		["3", "don't get hit", "if THEIR ball hits YOU, you lose a life. last one standing wins"],
 	]
-	var y := 70.0
-	for l in lines:
-		var big: bool = l[1] != Color.WHITE and l[1] != Color(1, 1, 1, 0.7)
-		draw_string(f, _v(135, y), l[0], HORIZONTAL_ALIGNMENT_LEFT, -1, int((12 if big else 9) * u), l[1])
-		y += 21.0 if big else 18.0
+	var y := 66.0
+	for i in steps.size():
+		var x := 132.0 - i * 9.0  # staircase, same as the menu buttons
+		_say(_v(x, y + 6), steps[i][0], 32, UI.YELLOW)
+		_say(_v(x + 26, y - 6), steps[i][1], 16, Color.WHITE)
+		_say(_v(x + 27, y + 8), steps[i][2], 8.5, Color.WHITE)
+		y += 38.0
+
+	var k0: Dictionary = Game.key_names[0]
+	var cols := [
+		["p1", Game.colors[0], 132.0, [["A D", "move"], ["W", "jump"], ["S", "fall"], [k0["swing"], "swing"], [k0["bunt"], "bunt"], [k0["special"], "special"]], "left side of the keyboard"],
+		["p2", Game.colors[1], 372.0, [["4 6", "move"], ["8", "jump"], ["5", "fall"], ["1", "swing"], ["2", "bunt"], ["3", "special"]], "numpad. arrows + K L ; work too"],
+	]
+	for c in cols:
+		var x: float = c[2]
+		var cy := 196.0
+		_say(_v(x, cy), c[0], 24, c[1])
+		var hw: float = f.get_string_size(str(c[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, int(24 * u)).x / u
+		_say(_v(x + hw + 8, cy - 1), c[4], 7.5, Color.WHITE)
+		cy += 18.0
+		var keys: Array = c[3]
+		for r in keys.size():
+			var rx: float = x - r * 3.0
+			_say(_v(rx, cy), str(keys[r][0]), 11, UI.YELLOW, HORIZONTAL_ALIGNMENT_RIGHT, 30.0 * u)
+			_say(_v(rx + 36, cy), str(keys[r][1]), 9.5, Color.WHITE)
+			cy += 15.0
+
+
+# outlined text, same look as the menu buttons
+func _say(p: Vector2, text: String, fs: float, col: Color, align := HORIZONTAL_ALIGNMENT_LEFT, w := -1.0) -> void:
+	var u := size.y / 360.0
+	draw_string_outline(Game.font, p, text, align, w, int(fs * u), int(maxf(3.0, fs * 0.3) * u), UI.BLACK)
+	draw_string(Game.font, p, text, align, w, int(fs * u), col)
 
 
 func _credit_lines() -> PackedStringArray:
