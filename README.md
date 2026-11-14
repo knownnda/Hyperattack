@@ -2,7 +2,7 @@
   <img src="icon.png" width="180" alt="a very excited cat doing the shaka">
 </p>
 
-<h1 align="center">⚾ HYPER ATTACK ⚾</h1>
+<h1 align="center"> HYPER ATTACK </h1>
 
 <p align="center"><b>hit the ball. hit it harder. do NOT get hit by the ball.</b></p>
 
@@ -13,7 +13,7 @@
 
 ---
 
-## 👋 hey guys!!!
+## hey guys!!!
 
 **welcome to HYPER ATTACK!!!** this is the game we made for the **Haven London game jam** on Saturday 14 November 2026. we turned up, got put into a random team, looked at each other, and said "what if Lethal League but worse at first and then actually kind of good". this is the result.
 
@@ -23,13 +23,13 @@ we also have a penguin, a cat, a mouse and a floating head with glasses. no furt
 
 ---
 
-## 🧠 the rules (all 3 of them)
+## the rules (all 3 of them)
 
 1. **smack it.** swing at the ball and it becomes YOUR colour. every hit makes it faster.
 2. **aim it.** hold up or down while you hit to send it up or down. hold forward too for a flatter angle. hold nothing and it goes roughly at your opponent anyway, because we are kind.
 3. **don't get hit.** if THEIR ball touches YOU, you lose a life. last one standing wins. your own ball can't hurt you, so go absolutely wild.
 
-### the spicy extras 🌶️
+### the spicy extras 
 - **charge your swing:** hold the swing button to wind up, then let go. the longer you hold, the faster it goes. a full charge can push the ball past its normal top speed, and then it's the other person's problem.
 - **bunt:** a little pop-up. it makes the ball neutral but keeps the speed, so you can set yourself up for something disgusting.
 - **specials:** hitting the ball fills your meter. when it flashes, press special. every character's is different (see below).
@@ -57,7 +57,7 @@ two people, one keyboard, zero personal space.
 
 ---
 
-## 🧑‍🤝‍🧑 the roster
+## the roster
 
 | | who | special | the vibes |
 |---|---|---|---|
@@ -70,7 +70,7 @@ the CPU comes in **easy**, **normal** and **hard**. hard will charge its swings 
 
 ---
 
-## ✨ stuff in the game
+##  stuff in the game
 
 - 🖥️ title screen → main menu → character select → GET READY → match → results, all with menus that slide, wobble and slam around like they've had three energy drinks
 - ⚾ a ball that goes from "aww" to "oh no" in about six hits
